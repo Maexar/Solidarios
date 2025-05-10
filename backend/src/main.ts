@@ -1,24 +1,52 @@
+// src/main.ts (com CORS)
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { TransformResponseInterceptor } from './common/interceptors/transform-response.interceptor';
+import { SanitizeInputInterceptor } from './common/interceptors/sanitize.interceptor';
+import {
+  createCorsConfig,
+  corsSecurityHeaders,
+} from './common/config/cors.config';
+import { ConfigService } from '@nestjs/config';
+import { useContainer } from 'class-validator';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const configService = app.get(ConfigService);
 
+  // Injeção de dependência para validadores personalizados
+  useContainer(app.select(AppModule), { fallbackOnErrors: true });
+
+  // Configurar CORS
+  app.enableCors(createCorsConfig(configService));
+
+  // Aplicar middleware de cabeçalhos de segurança após a configuração CORS
+  app.use(corsSecurityHeaders);
+
+  // Configurar ValidationPipe global com opções avançadas
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      transformOptions: { enableImplicitConversion: false },
+      disableErrorMessages: process.env.NODE_ENV === 'production',
+      forbidUnknownValues: true,
+      stopAtFirstError: false,
     }),
   );
+
+  // Aplicar filtros e interceptores globais
   app.useGlobalFilters(new GlobalExceptionFilter());
+  app.useGlobalInterceptors(
+    new TransformResponseInterceptor(),
+    new SanitizeInputInterceptor(),
+  );
 
-  app.useGlobalInterceptors(new TransformResponseInterceptor());
-
+  // Configuração do Swagger
   const config = new DocumentBuilder()
     .setTitle('API Solidários')
     .setDescription('API para o sistema de gerenciamento de doações Solidários')
@@ -35,10 +63,9 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
-  app.enableCors();
-
-  await app.listen(3000);
+  await app.listen(configService.get('PORT', 3000));
 }
+
 bootstrap().catch((err) => {
   console.error('Failed to start application:', err);
   process.exit(1);
