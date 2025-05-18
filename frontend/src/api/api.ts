@@ -1,46 +1,81 @@
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Platform } from "react-native";
+import { API_ENVIRONMENT } from "@env";
 
-// Determinar a URL base com base no ambiente e plataforma
-const getBaseURL = () => {
+// URLs disponíveis
+const API_URLS = {
+  CLOUD: "https://solidarios-app-dwus7.ondigitalocean.app/api",
+  LOCAL: "http://10.0.2.2:3000", // Para emuladores Android
+  // LOCAL: "http://localhost:3000", // Para web ou iOS
+};
+
+// Define o tipo para o ambiente
+type ApiEnvironment = keyof typeof API_URLS;
+
+// Obter o ambiente padrão do arquivo .env ou usar CLOUD como fallback
+const getDefaultEnvironment = (): ApiEnvironment => {
+  const envValue = API_ENVIRONMENT?.toUpperCase();
+  return envValue && envValue in API_URLS
+    ? (envValue as ApiEnvironment)
+    : "CLOUD";
+};
+
+// Variável para controlar qual ambiente usar
+let currentEnvironment: ApiEnvironment = getDefaultEnvironment();
+
+// Função para obter a URL base atual
+export const getApiBaseUrl = () => API_URLS[currentEnvironment];
+
+// Função para alternar entre ambientes
+export const toggleApiEnvironment = async () => {
+  currentEnvironment = currentEnvironment === "CLOUD" ? "LOCAL" : "CLOUD";
+  await AsyncStorage.setItem("@api_environment", currentEnvironment);
+  api.defaults.baseURL = getApiBaseUrl();
   console.log(
-    "[API Config] Ambiente:",
-    __DEV__ ? "Desenvolvimento" : "Produção"
+    `[API Config] Ambiente alterado para: ${currentEnvironment} (${getApiBaseUrl()})`
   );
-  console.log("[API Config] Plataforma:", Platform.OS);
+  return currentEnvironment;
+};
 
-  if (__DEV__) {
-    // No Android Emulator, usamos 10.0.2.2 para acessar o localhost da máquina host
-    // No iOS Simulator, usamos localhost
-    // Em dispositivos físicos, poderia usar o IP da máquina na rede local
-    const androidUrl = "http://10.0.2.2:3000";
-    const iosUrl = "http://localhost:3000";
+// Função para inicializar ambiente da API
+export const initApiEnvironment = async () => {
+  try {
+    // Primeiro tenta do AsyncStorage (para sobrescrever a configuração quando alterada pelo usuário)
+    const savedEnvironment = await AsyncStorage.getItem("@api_environment");
+    if (savedEnvironment && savedEnvironment in API_URLS) {
+      currentEnvironment = savedEnvironment as ApiEnvironment;
+    } else {
+      // Se não houver configuração no AsyncStorage, usa o valor do .env
+      currentEnvironment = getDefaultEnvironment();
+    }
 
-    const baseUrl = Platform.OS === "android" ? androidUrl : iosUrl;
-    console.log("[API Config] URL base selecionada:", baseUrl);
-    return baseUrl;
+    api.defaults.baseURL = getApiBaseUrl();
+    console.log(
+      `[API Config] URL base configurada: ${currentEnvironment} (${getApiBaseUrl()})`
+    );
+  } catch (error) {
+    console.error("[API Config] Erro ao inicializar ambiente:", error);
   }
-
-  return "https://api-solidarios.com"; // URL de produção
 };
 
 const api = axios.create({
-  baseURL: getBaseURL(),
-  timeout: 15000, // Aumentado para 15s para dar mais tempo em desenvolvimento
+  baseURL: API_URLS[currentEnvironment],
+  timeout: 15000,
   headers: {
     "Content-Type": "application/json",
   },
 });
+
+// Inicializa o ambiente (chamado na inicialização do app)
+initApiEnvironment();
 
 // Log de requisições
 api.interceptors.request.use(
   (config) => {
     console.log("[API] Requisição:", {
       method: config.method?.toUpperCase(),
-      url: `${config.baseURL}${config.url}`, // URL completa para debug
-      data: config.data ? "(dados presentes)" : "(sem dados)",
-      headers: config.headers,
+      url: `${config.url}`,
+      params: config.params,
     });
     return config;
   },
@@ -50,13 +85,12 @@ api.interceptors.request.use(
   }
 );
 
-// Log de respostas
+// Log de respostas e handling de refresh token
 api.interceptors.response.use(
   (response) => {
     console.log("[API] Resposta:", {
       status: response.status,
       url: response.config.url,
-      data: response.data ? "(dados presentes)" : "(sem dados)",
     });
     return response;
   },
@@ -70,9 +104,17 @@ api.interceptors.response.use(
   }
 );
 
-// Adicionar token de autenticação
+// Adicionar token de autenticação em cada requisição
 api.interceptors.request.use(
   async (config) => {
+    // Não adicionar token para rotas de autenticação
+    if (
+      config.url?.includes("/auth/login") ||
+      config.url?.includes("/auth/refresh")
+    ) {
+      return config;
+    }
+
     const token = await AsyncStorage.getItem("@auth_token");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;

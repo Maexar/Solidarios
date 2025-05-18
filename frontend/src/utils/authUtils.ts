@@ -1,8 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import axios from "axios";
+import api from "../api/api"; // Use a mesma instância do axios
 
 // URL base da API - deve corresponder à mesma URL usada em apiClient
-const API_BASE_URL = "http://10.0.2.2:3000"; // Ajustar conforme necessário
 
 export const handleLoginSuccess = async (
   accessToken: string,
@@ -19,12 +18,31 @@ export const handleLogout = async () => {
 
 export const handleRefreshTokens = async (refreshToken: string) => {
   try {
-    // Chamada direta à API sem depender de apiClient para evitar ciclos
-    const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
+    // Use a instância api em vez de axios diretamente e formate corretamente o payload
+    const response = await api.post("/auth/refresh", {
       refreshToken,
     });
 
-    const { accessToken, refreshToken: newRefreshToken } = response.data;
+    // Verificar se a resposta está no formato esperado (pode estar dentro de data.data)
+    let accessToken, newRefreshToken;
+
+    if (response.data.data) {
+      // Formato aninhado (resposta real do servidor)
+      accessToken = response.data.data.accessToken;
+      newRefreshToken = response.data.data.refreshToken;
+    } else {
+      // Formato direto
+      accessToken = response.data.accessToken;
+      newRefreshToken = response.data.refreshToken;
+    }
+
+    // Verificar se os tokens foram obtidos
+    if (!accessToken || !newRefreshToken) {
+      console.error("Tokens ausentes na resposta de refresh:", response.data);
+      throw new Error("Resposta de refresh incompleta");
+    }
+
+    console.log("[authUtils] Tokens renovados com sucesso");
 
     // Salvar os novos tokens
     await AsyncStorage.setItem("@auth_token", accessToken);
@@ -32,8 +50,14 @@ export const handleRefreshTokens = async (refreshToken: string) => {
 
     return { accessToken, refreshToken: newRefreshToken };
   } catch (error) {
-    // Remover tokens em caso de erro
+    console.error("[authUtils] Erro ao renovar tokens:", error);
     await handleLogout();
     throw error;
   }
+};
+
+// Função para verificar se há um token válido
+export const hasValidToken = async (): Promise<boolean> => {
+  const token = await AsyncStorage.getItem("@auth_token");
+  return token !== null;
 };

@@ -62,6 +62,12 @@ export const register = createAsyncThunk(
       const response = await AuthService.register(userData);
       console.log("[authSlice] Registro bem-sucedido, tokens recebidos");
 
+      // Verificação adicional para garantir que os tokens existem
+      if (!response.accessToken || !response.refreshToken) {
+        console.error("[authSlice] Tokens ausentes na resposta:", response);
+        return rejectWithValue("Resposta de autenticação inválida do servidor");
+      }
+
       // Salvar tokens no armazenamento persistente
       await AsyncStorage.setItem("@auth_token", response.accessToken);
       await AsyncStorage.setItem("@refresh_token", response.refreshToken);
@@ -74,7 +80,13 @@ export const register = createAsyncThunk(
         error.response?.data || error.message || error
       );
 
-      // Mensagem de erro mais descritiva para problemas de conexão
+      // Mensagem de erro mais descritiva para problemas específicos
+      if (error.message === "Resposta de registro incompleta do servidor") {
+        return rejectWithValue(
+          "O servidor não retornou os dados de autenticação necessários. Contate o administrador."
+        );
+      }
+
       if (error.message === "Network Error") {
         console.error(
           "[authSlice] Erro de conexão com o servidor. Verifique se o backend está rodando."
@@ -204,6 +216,23 @@ export const restoreAuthState = createAsyncThunk(
   }
 );
 
+// Função auxiliar para formatação de erros
+const formatErrorMessage = (error: any): string => {
+  if (!error) return "Ocorreu um erro desconhecido";
+
+  if (typeof error === "string") return error;
+
+  // Tratamento de estruturas aninhadas de erro
+  if (error.message) {
+    if (typeof error.message === "object" && error.message.message) {
+      return error.message.message;
+    }
+    return error.message;
+  }
+
+  return "Falha na comunicação com o servidor";
+};
+
 // Slice
 const authSlice = createSlice({
   name: "auth",
@@ -246,7 +275,7 @@ const authSlice = createSlice({
         console.log("[authSlice] Login rejeitado, erro:", action.payload);
         state.isLoading = false;
         state.isAuthenticated = false;
-        state.error = action.payload as string;
+        state.error = formatErrorMessage(action.payload);
       });
 
     // Register
@@ -274,7 +303,7 @@ const authSlice = createSlice({
         console.log("[authSlice] Registro rejeitado, erro:", action.payload);
         state.isLoading = false;
         state.isAuthenticated = false;
-        state.error = action.payload as string;
+        state.error = formatErrorMessage(action.payload);
       });
 
     // Logout
@@ -324,7 +353,7 @@ const authSlice = createSlice({
       })
       .addCase(getProfile.rejected, (state, action) => {
         state.isLoading = false;
-        state.error = action.payload as string;
+        state.error = formatErrorMessage(action.payload);
       });
 
     // Restore auth state
